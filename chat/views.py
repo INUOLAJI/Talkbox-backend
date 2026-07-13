@@ -1,4 +1,5 @@
 import json
+import uuid
 import cloudinary.uploader
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -10,7 +11,7 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .authentication import CsrfExemptSessionAuthentication
-from .models import Room, Message
+from .models import Room, Message, RoomReadStatus
 
 User = get_user_model()
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -73,7 +74,8 @@ def login_view(request):
                         'id': user.id,
                         'email': user.email,
                         'phone_number': user.phone_number,
-                        'full_name': user.full_name
+                        'full_name': user.full_name,
+                        'profile_picture_url': user.profile_picture_url,
                     }
                 }, status=200)
             else:
@@ -150,28 +152,36 @@ def list_rooms(request):
         last_msg = room.messages.order_by('-timestamp').first()
 
         if room.is_group:
-            display_name = room.name
+            display_name = room.title or room.name
             other_user_id = None
             is_online = False
+            profile_picture_url = room.profile_picture_url
         else:
             other_member = room.members.exclude(id=request.user.id).first()
             display_name = other_member.full_name if other_member else room.name
             other_user_id = other_member.id if other_member else None
             is_online = other_member.is_online if other_member else False
+            profile_picture_url = other_member.profile_picture_url if other_member else None
 
         if last_msg:
             if last_msg.text:
                 preview = last_msg.text
             elif last_msg.file_type == 'image':
-                preview = '📷 Photo'
+                preview = 'Photo'
             elif last_msg.file_type == 'file':
-                preview = '📎 File'
+                preview = 'File'
             else:
                 preview = ''
             last_time = last_msg.timestamp.isoformat()
         else:
             preview = 'No messages yet'
             last_time = room.created_at.isoformat()
+
+        last_read = RoomReadStatus.objects.filter(room=room, user=request.user).first()
+        if last_read:
+            unread_count = room.messages.filter(timestamp__gt=last_read.last_read_at).exclude(sender=request.user).count()
+        else:
+            unread_count = room.messages.exclude(sender=request.user).count()
 
         data.append({
             'id': room.id,
@@ -180,8 +190,10 @@ def list_rooms(request):
             'is_group': room.is_group,
             'other_user_id': other_user_id,
             'is_online': is_online,
+            'profile_picture_url': profile_picture_url,
             'last_message': preview,
             'last_message_time': last_time,
+            'unread_count': unread_count,
         })
 
     data.sort(key=lambda r: r['last_message_time'], reverse=True)
@@ -192,8 +204,22 @@ def list_rooms(request):
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def list_users(request):
-    users = User.objects.exclude(id=request.user.id).values('id', 'full_name', 'email', 'is_online')
+    contact_ids = Room.objects.filter(members=request.user).values_list('members__id', flat=True).distinct()
+    users = User.objects.filter(id__in=contact_ids).exclude(id=request.user.id).values(
+        'id', 'full_name', 'email', 'is_online', 'profile_picture_url'
+    )
     return Response(list(users))
+
+
+def _get_or_create_private_room(current_user, other_user):
+    existing = Room.objects.filter(is_group=False, members=current_user).filter(members=other_user).first()
+    if existing:
+        return existing, False
+
+    room_name = f"dm_{min(current_user.id, other_user.id)}_{max(current_user.id, other_user.id)}"
+    room = Room.objects.create(name=room_name, is_group=False)
+    room.members.add(current_user, other_user)
+    return room, True
 
 
 @api_view(['POST'])
@@ -209,27 +235,192 @@ def start_private_chat(request):
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
 
-    existing = Room.objects.filter(is_group=False, members=request.user).filter(members=other_user).first()
-    if existing:
-        return Response({'id': existing.id, 'name': existing.name})
+    room, created = _get_or_create_private_room(request.user, other_user)
+    status_code = 201 if created else 200
+    return Response({'id': room.id, 'name': room.name}, status=status_code)
 
-    room_name = f"dm_{min(request.user.id, other_user.id)}_{max(request.user.id, other_user.id)}"
-    room = Room.objects.create(name=room_name, is_group=False)
-    room.members.add(request.user, other_user)
 
-    return Response({'id': room.id, 'name': room.name}, status=201)
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def add_contact(request):
+    identifier = request.data.get('identifier', '').strip()
+    if not identifier:
+        return Response({'error': 'Please provide an email or phone number.'}, status=400)
+
+    if '@' in identifier:
+        contact = User.objects.filter(email__iexact=identifier).first()
+    else:
+        contact = User.objects.filter(phone_number=identifier).first()
+
+    if not contact:
+        return Response({'error': 'No user found with that email or phone number.'}, status=404)
+
+    if contact.id == request.user.id:
+        return Response({'error': 'You cannot add yourself as a contact.'}, status=400)
+
+    room, created = _get_or_create_private_room(request.user, contact)
+    status_code = 201 if created else 200
+    return Response({
+        'id': room.id,
+        'name': room.name,
+        'contact': {
+            'id': contact.id,
+            'full_name': contact.full_name,
+            'email': contact.email,
+            'phone_number': contact.phone_number,
+            'profile_picture_url': contact.profile_picture_url,
+            'is_online': contact.is_online,
+        },
+    }, status=status_code)
 
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def create_group_chat(request):
-    name = request.data.get('name')
+    display_name = request.data.get('name')
     member_ids = request.data.get('member_ids', [])
-    if not name:
+    if not display_name:
         return Response({'error': 'Group name is required'}, status=400)
 
-    room = Room.objects.create(name=name, is_group=True)
+    selected_member_ids = sorted({request.user.id, *[int(member_id) for member_id in member_ids if member_id]})
+    existing_room = None
+
+    for room in Room.objects.filter(is_group=True).prefetch_related('members'):
+        room_member_ids = sorted(room.members.values_list('id', flat=True))
+        if room_member_ids == selected_member_ids:
+            existing_room = room
+            break
+
+    if existing_room:
+        return Response({'id': existing_room.id, 'name': existing_room.name, 'display_name': existing_room.title or existing_room.name}, status=200)
+
+    safe_name = f"group_{uuid.uuid4().hex[:12]}"
+    room = Room.objects.create(name=safe_name, title=display_name.strip(), is_group=True)
     room.members.add(request.user, *User.objects.filter(id__in=member_ids))
 
-    return Response({'id': room.id, 'name': room.name}, status=201)
+    return Response({'id': room.id, 'name': room.name, 'display_name': room.title}, status=201)
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def mark_room_read(request, room_id):
+    try:
+        room = Room.objects.get(id=room_id, members=request.user)
+    except Room.DoesNotExist:
+        return Response({'error': 'Room not found'}, status=404)
+
+    status_obj, _ = RoomReadStatus.objects.get_or_create(room=room, user=request.user)
+    status_obj.save()  # touches auto_now, refreshing last_read_at to now
+    return Response({'success': True})
+
+
+@api_view(['GET', 'PATCH'])
+@authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def profile_settings(request):
+    if request.method == 'GET':
+        return Response({
+            'id': request.user.id,
+            'email': request.user.email,
+            'phone_number': request.user.phone_number,
+            'full_name': request.user.full_name,
+            'bio': request.user.bio,
+            'theme_preference': request.user.theme_preference,
+            'profile_picture_url': request.user.profile_picture_url,
+            'is_online': request.user.is_online,
+        })
+
+    data = request.data
+    updated_fields = []
+
+    if 'full_name' in data:
+        request.user.full_name = data.get('full_name', '').strip()
+        updated_fields.append('full_name')
+
+    if 'phone_number' in data:
+        request.user.phone_number = data.get('phone_number', '').strip()
+        updated_fields.append('phone_number')
+
+    if 'bio' in data:
+        request.user.bio = data.get('bio', '').strip()
+        updated_fields.append('bio')
+
+    if 'theme_preference' in data:
+        theme = data.get('theme_preference', 'light').strip().lower()
+        if theme not in {'light', 'dark'}:
+            return Response({'error': 'Theme must be light or dark.'}, status=400)
+        request.user.theme_preference = theme
+        updated_fields.append('theme_preference')
+
+    if updated_fields:
+        request.user.save(update_fields=updated_fields)
+
+    return Response({
+        'id': request.user.id,
+        'email': request.user.email,
+        'phone_number': request.user.phone_number,
+        'full_name': request.user.full_name,
+        'bio': request.user.bio,
+        'theme_preference': request.user.theme_preference,
+        'profile_picture_url': request.user.profile_picture_url,
+        'is_online': request.user.is_online,
+    })
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def upload_profile_picture(request):
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'No file provided'}, status=400)
+
+    if file.size > MAX_FILE_SIZE:
+        return Response({'error': 'File exceeds 5MB limit'}, status=400)
+
+    if not file.content_type.startswith('image/'):
+        return Response({'error': 'Only image files are allowed'}, status=400)
+
+    result = cloudinary.uploader.upload(
+        file,
+        resource_type='image',
+        folder='profile_pics/',
+    )
+
+    request.user.profile_picture_url = result['secure_url']
+    request.user.save(update_fields=['profile_picture_url'])
+
+    return Response({'profile_picture_url': result['secure_url']})
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def upload_group_picture(request, room_id):
+    try:
+        room = Room.objects.get(id=room_id, is_group=True, members=request.user)
+    except Room.DoesNotExist:
+        return Response({'error': 'Group not found or you are not a member'}, status=404)
+
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'No file provided'}, status=400)
+
+    if file.size > MAX_FILE_SIZE:
+        return Response({'error': 'File exceeds 5MB limit'}, status=400)
+
+    if not file.content_type.startswith('image/'):
+        return Response({'error': 'Only image files are allowed'}, status=400)
+
+    result = cloudinary.uploader.upload(
+        file,
+        resource_type='image',
+        folder='group_pics/',
+    )
+
+    room.profile_picture_url = result['secure_url']
+    room.save(update_fields=['profile_picture_url'])
+
+    return Response({'profile_picture_url': result['secure_url']})  

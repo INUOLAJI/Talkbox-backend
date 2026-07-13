@@ -26,7 +26,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=15, unique=True)
     full_name = models.CharField(max_length=255, blank=True)
-    profile_picture = models.ImageField(upload_to='profiles/', null=True, blank=True)
+    bio = models.TextField(blank=True, default='')
+    theme_preference = models.CharField(max_length=20, choices=[('light','Light'), ('dark','Dark')], default='light')
+    profile_picture_url = models.URLField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_online = models.BooleanField(default=False)
@@ -61,6 +63,8 @@ def validate_file_size(value):
 
 class Room(models.Model):
     name = models.CharField(max_length=255, unique=True)
+    title = models.CharField(max_length=255, blank=True)
+    profile_picture_url = models.URLField(null=True, blank=True)
     is_group = models.BooleanField(default=False)
     members = models.ManyToManyField(User, related_name='rooms', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -86,3 +90,11 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.sender} @ {self.timestamp}: {self.text[:30]}"
+    
+class RoomReadStatus(models.Model):
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='read_statuses')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='read_statuses')
+    last_read_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('room', 'user')
