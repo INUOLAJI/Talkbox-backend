@@ -5,6 +5,30 @@ from django.utils import timezone
 from .models import Room, Message, User
 
 
+class NotificationConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.user = self.scope.get('user')
+        if not self.user or not self.user.is_authenticated:
+            await self.close()
+            return
+        self.group_name = f'notify_{self.user.id}'
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def send_notification(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'notification',
+            'room_id': event['room_id'],
+            'room_name': event['room_name'],
+            'sender': event['sender'],
+            'message': event['message'],
+        }))
+
+
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.user = self.scope.get('user')
@@ -66,6 +90,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def broadcast_message(self, msg):
         await self.channel_layer.group_send(self.room_group_name, {'type': 'chat_message', 'message': msg})
+        # Push a notification to every room member except the sender
+        member_ids = await self.get_room_member_ids()
+        for uid in member_ids:
+            if uid == self.user.id:
+                continue
+            await self.channel_layer.group_send(f'notify_{uid}', {
+                'type': 'send_notification',
+                'room_id': await self.get_room_id(),
+                'room_name': self.room_name,
+                'sender': msg['username'],
+                'message': msg['message'] or ('📎 File' if msg.get('file_url') else ''),
+            })
 
     async def chat_message(self, event):
         await self.send(text_data=json.dumps({'type': 'message', **event['message']}))
@@ -77,6 +113,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'full_name': event['full_name'],
             'is_online': event['is_online'],
         }))
+
+    @database_sync_to_async
+    def get_room_member_ids(self):
+        try:
+            room = Room.objects.get(name=self.room_name)
+            return list(room.members.values_list('id', flat=True))
+        except Room.DoesNotExist:
+            return []
+
+    @database_sync_to_async
+    def get_room_id(self):
+        try:
+            return Room.objects.get(name=self.room_name).id
+        except Room.DoesNotExist:
+            return None
 
     @database_sync_to_async
     def set_online_status(self, status):
