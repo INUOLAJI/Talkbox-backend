@@ -4,13 +4,15 @@ A Django Channels WebSocket backend for the Talkbox real-time chat app. Supports
 
 ## 🚀 Live API
 
+**Live URL:** [https://talkbox-backend.onrender.com](https://talkbox-backend.onrender.com)
+
 **Backend Repo:** [https://github.com/INUOLAJU/Talkbox-backend.git](https://github.com/INUOLAJU/Talkbox-backend.git)
 
-Once running locally, API docs are available at:
+Once running, API docs are available at:
 
 ```
-http://127.0.0.1:8000/api/schema/swagger/
-http://127.0.0.1:8000/api/schema/redoc/
+https://talkbox-backend.onrender.com/api/schema/swagger/
+https://talkbox-backend.onrender.com/api/schema/redoc/
 ```
 
 ---
@@ -181,6 +183,8 @@ backend/
 ## 🔌 Frontend
 
 **Frontend Repo:** [https://github.com/INUOLAJU/Talkbox.git](https://github.com/INUOLAJU/Talkbox.git)
+
+**Frontend Live:** [https://talkbox-pied.vercel.app](https://talkbox-pied.vercel.app)
 
 ---
 
