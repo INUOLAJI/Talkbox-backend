@@ -34,3 +34,4 @@ typing_extensions==4.16.0
 tzdata==2026.2
 ujson==5.13.0
 zope.interface==8.5
+drf-spectacular==0.30.0

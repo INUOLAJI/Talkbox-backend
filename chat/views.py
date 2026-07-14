@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, inline_serializer
+from rest_framework import serializers
 
 from .authentication import CsrfExemptSessionAuthentication
 from .models import Room, Message, RoomReadStatus
@@ -17,6 +19,20 @@ User = get_user_model()
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
+@extend_schema(
+    tags=['Auth'],
+    summary='Register a new user',
+    request=inline_serializer('SignupRequest', fields={
+        'email': serializers.EmailField(),
+        'phone_number': serializers.CharField(),
+        'full_name': serializers.CharField(required=False),
+        'password': serializers.CharField(),
+    }),
+    responses={201: inline_serializer('SignupResponse', fields={
+        'message': serializers.CharField(),
+        'user_id': serializers.IntegerField(),
+    })},
+)
 @csrf_exempt
 def signup_view(request):
     if request.method == 'POST':
@@ -53,6 +69,24 @@ def signup_view(request):
     return JsonResponse({'error': 'Only POST requests are allowed.'}, status=405)
 
 
+@extend_schema(
+    tags=['Auth'],
+    summary='Login and get session cookie',
+    request=inline_serializer('LoginRequest', fields={
+        'email': serializers.EmailField(),
+        'password': serializers.CharField(),
+    }),
+    responses={200: inline_serializer('LoginResponse', fields={
+        'message': serializers.CharField(),
+        'user': inline_serializer('UserInfo', fields={
+            'id': serializers.IntegerField(),
+            'email': serializers.EmailField(),
+            'phone_number': serializers.CharField(),
+            'full_name': serializers.CharField(),
+            'profile_picture_url': serializers.CharField(),
+        }),
+    })},
+)
 @csrf_exempt
 def login_view(request):
     if request.method == 'POST':
@@ -89,6 +123,15 @@ def login_view(request):
     return JsonResponse({'error': 'Only POST requests are allowed.'}, status=405)
 
 
+@extend_schema(
+    tags=['Files'],
+    summary='Upload a chat file or image',
+    request=inline_serializer('FileUploadRequest', fields={'file': serializers.FileField()}),
+    responses={200: inline_serializer('FileUploadResponse', fields={
+        'file_url': serializers.CharField(),
+        'file_type': serializers.CharField(),
+    })},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -113,6 +156,19 @@ def upload_chat_file(request):
     })
 
 
+@extend_schema(
+    tags=['Messages'],
+    summary='Get message history for a room',
+    responses={200: inline_serializer('MessageItem', many=True, fields={
+        'id': serializers.IntegerField(),
+        'message': serializers.CharField(),
+        'username': serializers.CharField(),
+        'sender_id': serializers.IntegerField(),
+        'file_url': serializers.CharField(),
+        'file_type': serializers.CharField(),
+        'timestamp': serializers.CharField(),
+    })},
+)
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -134,6 +190,15 @@ def room_message_history(request, room_name):
     return Response(data)
 
 
+@extend_schema(
+    tags=['Users'],
+    summary='List currently online users',
+    responses={200: inline_serializer('OnlineUser', many=True, fields={
+        'id': serializers.IntegerField(),
+        'full_name': serializers.CharField(),
+        'email': serializers.EmailField(),
+    })},
+)
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -142,6 +207,22 @@ def online_users(request):
     return Response(list(online))
 
 
+@extend_schema(
+    tags=['Rooms'],
+    summary='List all rooms for the current user',
+    responses={200: inline_serializer('RoomItem', many=True, fields={
+        'id': serializers.IntegerField(),
+        'name': serializers.CharField(),
+        'display_name': serializers.CharField(),
+        'is_group': serializers.BooleanField(),
+        'other_user_id': serializers.IntegerField(),
+        'is_online': serializers.BooleanField(),
+        'profile_picture_url': serializers.CharField(),
+        'last_message': serializers.CharField(),
+        'last_message_time': serializers.CharField(),
+        'unread_count': serializers.IntegerField(),
+    })},
+)
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -200,6 +281,17 @@ def list_rooms(request):
     return Response(data)
 
 
+@extend_schema(
+    tags=['Users'],
+    summary='List contacts (users sharing a room with current user)',
+    responses={200: inline_serializer('ContactUser', many=True, fields={
+        'id': serializers.IntegerField(),
+        'full_name': serializers.CharField(),
+        'email': serializers.EmailField(),
+        'is_online': serializers.BooleanField(),
+        'profile_picture_url': serializers.CharField(),
+    })},
+)
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -222,6 +314,15 @@ def _get_or_create_private_room(current_user, other_user):
     return room, True
 
 
+@extend_schema(
+    tags=['Rooms'],
+    summary='Start or get a private chat room with another user',
+    request=inline_serializer('StartChatRequest', fields={'user_id': serializers.IntegerField()}),
+    responses={200: inline_serializer('StartChatResponse', fields={
+        'id': serializers.IntegerField(),
+        'name': serializers.CharField(),
+    })},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -240,6 +341,23 @@ def start_private_chat(request):
     return Response({'id': room.id, 'name': room.name}, status=status_code)
 
 
+@extend_schema(
+    tags=['Contacts'],
+    summary='Add a contact by email or phone number',
+    request=inline_serializer('AddContactRequest', fields={'identifier': serializers.CharField()}),
+    responses={200: inline_serializer('AddContactResponse', fields={
+        'id': serializers.IntegerField(),
+        'name': serializers.CharField(),
+        'contact': inline_serializer('ContactDetail', fields={
+            'id': serializers.IntegerField(),
+            'full_name': serializers.CharField(),
+            'email': serializers.EmailField(),
+            'phone_number': serializers.CharField(),
+            'profile_picture_url': serializers.CharField(),
+            'is_online': serializers.BooleanField(),
+        }),
+    })},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -275,6 +393,19 @@ def add_contact(request):
     }, status=status_code)
 
 
+@extend_schema(
+    tags=['Rooms'],
+    summary='Create a group chat room',
+    request=inline_serializer('CreateGroupRequest', fields={
+        'name': serializers.CharField(),
+        'member_ids': serializers.ListField(child=serializers.IntegerField()),
+    }),
+    responses={201: inline_serializer('CreateGroupResponse', fields={
+        'id': serializers.IntegerField(),
+        'name': serializers.CharField(),
+        'display_name': serializers.CharField(),
+    })},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -303,6 +434,11 @@ def create_group_chat(request):
     return Response({'id': room.id, 'name': room.name, 'display_name': room.title}, status=201)
 
 
+@extend_schema(
+    tags=['Rooms'],
+    summary='Mark a room as read',
+    responses={200: inline_serializer('MarkReadResponse', fields={'success': serializers.BooleanField()})},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -317,6 +453,26 @@ def mark_room_read(request, room_id):
     return Response({'success': True})
 
 
+@extend_schema(
+    tags=['Profile'],
+    summary='Get or update the current user profile',
+    request=inline_serializer('ProfileUpdateRequest', fields={
+        'full_name': serializers.CharField(required=False),
+        'phone_number': serializers.CharField(required=False),
+        'bio': serializers.CharField(required=False),
+        'theme_preference': serializers.ChoiceField(choices=['light', 'dark'], required=False),
+    }),
+    responses={200: inline_serializer('ProfileResponse', fields={
+        'id': serializers.IntegerField(),
+        'email': serializers.EmailField(),
+        'phone_number': serializers.CharField(),
+        'full_name': serializers.CharField(),
+        'bio': serializers.CharField(),
+        'theme_preference': serializers.CharField(),
+        'profile_picture_url': serializers.CharField(),
+        'is_online': serializers.BooleanField(),
+    })},
+)
 @api_view(['GET', 'PATCH'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -370,6 +526,12 @@ def profile_settings(request):
     })
 
 
+@extend_schema(
+    tags=['Profile'],
+    summary='Upload a profile picture',
+    request=inline_serializer('ProfilePicRequest', fields={'file': serializers.ImageField()}),
+    responses={200: inline_serializer('ProfilePicResponse', fields={'profile_picture_url': serializers.CharField()})},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -395,6 +557,12 @@ def upload_profile_picture(request):
 
     return Response({'profile_picture_url': result['secure_url']})
 
+@extend_schema(
+    tags=['Rooms'],
+    summary='Upload a group profile picture',
+    request=inline_serializer('GroupPicRequest', fields={'file': serializers.ImageField()}),
+    responses={200: inline_serializer('GroupPicResponse', fields={'profile_picture_url': serializers.CharField()})},
+)
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
