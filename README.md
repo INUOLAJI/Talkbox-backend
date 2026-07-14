@@ -6,9 +6,12 @@ A Django Channels WebSocket backend for the Talkbox real-time chat app. Supports
 
 **Backend Repo:** [https://github.com/INUOLAJU/Talkbox-backend.git](https://github.com/INUOLAJU/Talkbox-backend.git)
 
-**Swagger UI:** `http://127.0.0.1:8000/api/schema/swagger/`
+Once running locally, API docs are available at:
 
-**ReDoc:** `http://127.0.0.1:8000/api/schema/redoc/`
+```
+http://127.0.0.1:8000/api/schema/swagger/
+http://127.0.0.1:8000/api/schema/redoc/
+```
 
 ---
 
@@ -142,7 +145,11 @@ python manage.py runserver
 
 API available at `http://127.0.0.1:8000`
 
-Swagger docs at `http://127.0.0.1:8000/api/schema/swagger/`
+Swagger docs at:
+```
+http://127.0.0.1:8000/api/schema/swagger/
+http://127.0.0.1:8000/api/schema/redoc/
+```
 
 ---
 
