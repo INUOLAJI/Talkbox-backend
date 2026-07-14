@@ -126,11 +126,15 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Local Channels Layer for development
+# Redis-backed Channels Layer (production) — required so presence/messages
+# work correctly across multiple workers/instances, and so Upstash is actually used
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
-    }
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [env('REDIS_URL')],
+        },
+    },
 }
 
 SIMPLE_JWT = {
@@ -164,7 +168,8 @@ AUTH_USER_MODEL = 'chat.User'
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 
-# CORS / cookie config — must match your Vite dev server origin exactly
+# CORS / cookie config — frontend and backend are on different domains in production,
+# so cookies must be SameSite=None + Secure to actually get sent on cross-site requests
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "https://talkbox-pied.vercel.app",
@@ -175,5 +180,7 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.vercel\.app$",
 ]
 
-SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'None'
+CSRF_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
