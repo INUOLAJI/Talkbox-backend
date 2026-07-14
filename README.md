@@ -184,7 +184,7 @@ backend/
 
 **Frontend Repo:** [https://github.com/INUOLAJU/Talkbox.git](https://github.com/INUOLAJU/Talkbox.git)
 
-**Frontend Live:** [https://talkbox-pied.vercel.app](https://talkbox-pied.vercel.app)
+**Frontend Live:** [https://talkbox-git-main-inuolajis-projects.vercel.app](https://talkbox-git-main-inuolajis-projects.vercel.app)
 
 ---
 
