@@ -167,6 +167,7 @@ STATIC_URL = 'static/'
 # CORS / cookie config — must match your Vite dev server origin exactly
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "https://talkbox-pied.vercel.app",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
