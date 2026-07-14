@@ -1,15 +1,11 @@
-import json
 import uuid
 import cloudinary.uploader
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model, authenticate, login
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, inline_serializer
+from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 
 from .authentication import CsrfExemptSessionAuthentication
@@ -33,40 +29,36 @@ MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
         'user_id': serializers.IntegerField(),
     })},
 )
-@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([])
 def signup_view(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            email = data.get('email')
-            phone_number = data.get('phone_number')
-            full_name = data.get('full_name', '')
-            password = data.get('password')
+    try:
+        data = request.data
+        email = data.get('email')
+        phone_number = data.get('phone_number')
+        full_name = data.get('full_name', '')
+        password = data.get('password')
 
-            if not email or not phone_number or not password:
-                return JsonResponse({'error': 'Please provide email, phone number, and password.'}, status=400)
+        if not email or not phone_number or not password:
+            return Response({'error': 'Please provide email, phone number, and password.'}, status=400)
 
-            if User.objects.filter(email=email).exists():
-                return JsonResponse({'error': 'A user with this email already exists.'}, status=400)
+        if User.objects.filter(email=email).exists():
+            return Response({'error': 'A user with this email already exists.'}, status=400)
 
-            if User.objects.filter(phone_number=phone_number).exists():
-                return JsonResponse({'error': 'A user with this phone number already exists.'}, status=400)
+        if User.objects.filter(phone_number=phone_number).exists():
+            return Response({'error': 'A user with this phone number already exists.'}, status=400)
 
-            user = User.objects.create_user(
-                email=email,
-                phone_number=phone_number,
-                full_name=full_name,
-                password=password
-            )
+        user = User.objects.create_user(
+            email=email,
+            phone_number=phone_number,
+            full_name=full_name,
+            password=password
+        )
+        return Response({'message': 'User registered successfully!', 'user_id': user.id}, status=201)
 
-            return JsonResponse({'message': 'User registered successfully!', 'user_id': user.id}, status=201)
-
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON data.'}, status=400)
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-
-    return JsonResponse({'error': 'Only POST requests are allowed.'}, status=405)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
 
 
 @extend_schema(
@@ -87,40 +79,39 @@ def signup_view(request):
         }),
     })},
 )
-@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([])
 def login_view(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            email = data.get('email')
-            password = data.get('password')
+    try:
+        data = request.data
+        email = data.get('email')
+        password = data.get('password')
 
-            if not email or not password:
-                return JsonResponse({'error': 'Please provide both email and password.'}, status=400)
+        if not email or not password:
+            return Response({'error': 'Please provide both email and password.'}, status=400)
 
-            user = authenticate(request, username=email, password=password)
+        user = authenticate(request, username=email, password=password)
 
-            if user is not None:
-                login(request, user)
-                return JsonResponse({
-                    'message': 'Login successful!',
-                    'user': {
-                        'id': user.id,
-                        'email': user.email,
-                        'phone_number': user.phone_number,
-                        'full_name': user.full_name,
-                        'profile_picture_url': user.profile_picture_url,
-                    }
-                }, status=200)
-            else:
-                return JsonResponse({'error': 'Invalid email or password.'}, status=401)
+        if user is not None:
+            login(request, user)
+            return Response({
+                'message': 'Login successful!',
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'phone_number': user.phone_number,
+                    'full_name': user.full_name,
+                    'profile_picture_url': user.profile_picture_url,
+                    'bio': user.bio,
+                    'theme_preference': user.theme_preference,
+                }
+            }, status=200)
+        else:
+            return Response({'error': 'Invalid email or password.'}, status=401)
 
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON data.'}, status=400)
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-
-    return JsonResponse({'error': 'Only POST requests are allowed.'}, status=405)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
 
 
 @extend_schema(
