@@ -1,6 +1,7 @@
 import uuid
 import cloudinary.uploader
 from django.contrib.auth import get_user_model, authenticate, login
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -95,8 +96,11 @@ def login_view(request):
 
         if user is not None:
             login(request, user)
+            refresh = RefreshToken.for_user(user)
             return Response({
                 'message': 'Login successful!',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
                 'user': {
                     'id': user.id,
                     'email': user.email,
