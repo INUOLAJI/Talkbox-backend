@@ -87,13 +87,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
         msg_type = data.get('type', 'text')
 
         if msg_type in ('ping', 'pong'):
-            return  # keepalive — ignore silently
+            return
+
+        if msg_type == 'typing':
+            await self.channel_layer.group_send(self.room_group_name, {
+                'type': 'typing_event',
+                'user_id': self.user.id,
+                'full_name': self.user.full_name or self.user.email,
+                'is_typing': data.get('is_typing', False),
+            })
+            return
 
         if msg_type == 'text':
             text = data.get('message', '').strip()
             if not text:
                 return
-            msg = await self.save_message(text=text, parent_id=data.get('parent_id'))
+            msg = await self.save_message(text=text, parent_id=data.get('parent_id'), temp_id=data.get('temp_id'))
             await self.broadcast_message(msg)
 
         elif msg_type == 'file':
@@ -122,6 +131,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def chat_message(self, event):
         await self.send(text_data=json.dumps({'type': 'message', **event['message']}))
 
+    async def typing_event(self, event):
+        # Don't echo typing back to the sender
+        if event['user_id'] == self.user.id:
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'typing',
+            'user_id': event['user_id'],
+            'full_name': event['full_name'],
+            'is_typing': event['is_typing'],
+        }))
+
     async def presence_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'presence',
@@ -143,7 +163,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         User.objects.filter(id=self.user.id).update(is_online=status, last_seen=timezone.now())
 
     @database_sync_to_async
-    def save_message(self, text='', file_url=None, file_type='', parent_id=None):
+    def save_message(self, text='', file_url=None, file_type='', parent_id=None, temp_id=None):
         room, _ = Room.objects.get_or_create(name=self.room_name)
         m = Message.objects.create(
             room=room, sender=self.user, text=text,
@@ -155,6 +175,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'sender_id': self.user.id,
             'file_url': m.file_url, 'file_type': m.file_type,
             'parent_id': m.parent_id, 'timestamp': m.timestamp.isoformat(),
+            'temp_id': temp_id,
         }
 
     @database_sync_to_async
