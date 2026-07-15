@@ -34,6 +34,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.user = self.scope.get('user')
         self.room_name = self.scope['url_route']['kwargs']['room_name']
         self.room_group_name = f'chat_{self.room_name}'
+        # Cache room id and member ids on connect — avoids 2 DB hits per message
+        self._room_id, self._member_ids = await self.get_room_info()
 
         await self.accept()
 
@@ -90,14 +92,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def broadcast_message(self, msg):
         await self.channel_layer.group_send(self.room_group_name, {'type': 'chat_message', 'message': msg})
-        # Push a notification to every room member except the sender
-        member_ids = await self.get_room_member_ids()
-        for uid in member_ids:
+        # Use cached room id and member ids — zero extra DB hits
+        for uid in self._member_ids:
             if uid == self.user.id:
                 continue
             await self.channel_layer.group_send(f'notify_{uid}', {
                 'type': 'send_notification',
-                'room_id': await self.get_room_id(),
+                'room_id': self._room_id,
                 'room_name': self.room_name,
                 'sender': msg['username'],
                 'message': msg['message'] or ('📎 File' if msg.get('file_url') else ''),
@@ -115,19 +116,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
 
     @database_sync_to_async
-    def get_room_member_ids(self):
+    def get_room_info(self):
         try:
             room = Room.objects.get(name=self.room_name)
-            return list(room.members.values_list('id', flat=True))
+            return room.id, list(room.members.values_list('id', flat=True))
         except Room.DoesNotExist:
-            return []
-
-    @database_sync_to_async
-    def get_room_id(self):
-        try:
-            return Room.objects.get(name=self.room_name).id
-        except Room.DoesNotExist:
-            return None
+            return None, []
 
     @database_sync_to_async
     def set_online_status(self, status):

@@ -222,10 +222,57 @@ def online_users(request):
 @authentication_classes([JWTAuthentication, CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def list_rooms(request):
-    rooms = Room.objects.filter(members=request.user).prefetch_related('members', 'messages')
+    from django.db.models import OuterRef, Subquery, Max
+
+    rooms = (
+        Room.objects.filter(members=request.user)
+        .prefetch_related('members')
+        .only('id', 'name', 'title', 'is_group', 'profile_picture_url', 'created_at')
+    )
+
+    room_ids = [r.id for r in rooms]
+
+    # Batch fetch last message per room
+    last_msg_qs = (
+        Message.objects.filter(room_id=OuterRef('id'))
+        .order_by('-timestamp')
+        .values('text', 'file_type', 'timestamp')[:1]
+    )
+    rooms_with_last = rooms.annotate(
+        last_text=Subquery(last_msg_qs.values('text')),
+        last_file_type=Subquery(last_msg_qs.values('file_type')),
+        last_ts=Subquery(last_msg_qs.values('timestamp')),
+    )
+
+    # Batch fetch read statuses
+    read_map = {
+        rs.room_id: rs.last_read_at
+        for rs in RoomReadStatus.objects.filter(room_id__in=room_ids, user=request.user)
+    }
+
+    # Batch fetch unread counts
+    from django.db.models import Count, Q
+    unread_qs = (
+        Message.objects.filter(room_id__in=room_ids)
+        .exclude(sender=request.user)
+        .values('room_id')
+    )
+    # Per-room unread using Python after one query
+    all_msgs_for_unread = list(
+        Message.objects.filter(room_id__in=room_ids)
+        .exclude(sender=request.user)
+        .values('room_id', 'timestamp')
+    )
+    unread_map = {}
+    for m in all_msgs_for_unread:
+        rid = m['room_id']
+        last_read_at = read_map.get(rid)
+        if last_read_at is None or m['timestamp'] > last_read_at:
+            unread_map[rid] = unread_map.get(rid, 0) + 1
+
     data = []
-    for room in rooms:
-        last_msg = room.messages.order_by('-timestamp').first()
+    for room in rooms_with_last:
+        members = list(room.members.all())
 
         if room.is_group:
             display_name = room.title or room.name
@@ -233,31 +280,25 @@ def list_rooms(request):
             is_online = False
             profile_picture_url = room.profile_picture_url
         else:
-            other_member = room.members.exclude(id=request.user.id).first()
+            other_member = next((m for m in members if m.id != request.user.id), None)
             display_name = other_member.full_name if other_member else room.name
             other_user_id = other_member.id if other_member else None
             is_online = other_member.is_online if other_member else False
             profile_picture_url = other_member.profile_picture_url if other_member else None
 
-        if last_msg:
-            if last_msg.text:
-                preview = last_msg.text
-            elif last_msg.file_type == 'image':
+        if room.last_ts:
+            if room.last_text:
+                preview = room.last_text
+            elif room.last_file_type == 'image':
                 preview = 'Photo'
-            elif last_msg.file_type == 'file':
+            elif room.last_file_type == 'file':
                 preview = 'File'
             else:
                 preview = ''
-            last_time = last_msg.timestamp.isoformat()
+            last_time = room.last_ts.isoformat()
         else:
             preview = 'No messages yet'
             last_time = room.created_at.isoformat()
-
-        last_read = RoomReadStatus.objects.filter(room=room, user=request.user).first()
-        if last_read:
-            unread_count = room.messages.filter(timestamp__gt=last_read.last_read_at).exclude(sender=request.user).count()
-        else:
-            unread_count = room.messages.exclude(sender=request.user).count()
 
         data.append({
             'id': room.id,
@@ -269,7 +310,7 @@ def list_rooms(request):
             'profile_picture_url': profile_picture_url,
             'last_message': preview,
             'last_message_time': last_time,
-            'unread_count': unread_count,
+            'unread_count': unread_map.get(room.id, 0),
         })
 
     data.sort(key=lambda r: r['last_message_time'], reverse=True)
@@ -413,7 +454,7 @@ def create_group_chat(request):
     selected_member_ids = sorted({request.user.id, *[int(member_id) for member_id in member_ids if member_id]})
     existing_room = None
 
-    for room in Room.objects.filter(is_group=True).prefetch_related('members'):
+    for room in Room.objects.filter(is_group=True, members__id__in=selected_member_ids).prefetch_related('members').distinct():
         room_member_ids = sorted(room.members.values_list('id', flat=True))
         if room_member_ids == selected_member_ids:
             existing_room = room

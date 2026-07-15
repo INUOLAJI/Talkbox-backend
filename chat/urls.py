@@ -1,7 +1,12 @@
 from django.urls import path
+from django.http import JsonResponse
 from .views import signup_view, login_view, upload_chat_file, list_rooms, start_private_chat, add_contact, create_group_chat, list_users, mark_room_read, profile_settings, upload_profile_picture, upload_group_picture
 
+def ping(request):
+    return JsonResponse({'status': 'ok'})
+
 urlpatterns = [
+    path('ping/', ping, name='ping'),
     path('api/signup/', signup_view, name='signup'),
     path('api/login/', login_view, name='login'),
     path('api/chat/upload/', upload_chat_file, name='upload_chat_file'),
