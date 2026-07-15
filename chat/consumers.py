@@ -1,3 +1,4 @@
+import asyncio
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -34,15 +35,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.user = self.scope.get('user')
         self.room_name = self.scope['url_route']['kwargs']['room_name']
         self.room_group_name = f'chat_{self.room_name}'
-        # Cache room id and member ids on connect — avoids 2 DB hits per message
         self._room_id, self._member_ids = await self.get_room_info()
+        self._heartbeat_task = None
 
         await self.accept()
 
         if self.user and self.user.is_authenticated:
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.channel_layer.group_add('presence', self.channel_name)
-
             await self.set_online_status(True)
             await self.channel_layer.group_send('presence', {
                 'type': 'presence_update',
@@ -53,8 +53,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         history = await self.get_message_history()
         await self.send(text_data=json.dumps({'type': 'history', 'messages': history}))
+        self._heartbeat_task = asyncio.ensure_future(self._heartbeat())
+
+    async def _heartbeat(self):
+        """Send a ping every 30s to keep Render's 60s idle timeout from killing the connection."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await self.send(text_data=json.dumps({'type': 'ping'}))
+            except Exception:
+                break
 
     async def disconnect(self, close_code):
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
         if getattr(self, 'user', None) and self.user.is_authenticated:
             await self.set_online_status(False)
             await self.channel_layer.group_send('presence', {
@@ -73,6 +85,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         data = json.loads(text_data)
         msg_type = data.get('type', 'text')
+
+        if msg_type in ('ping', 'pong'):
+            return  # keepalive — ignore silently
 
         if msg_type == 'text':
             text = data.get('message', '').strip()
